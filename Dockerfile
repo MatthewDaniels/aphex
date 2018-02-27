@@ -8,7 +8,7 @@ MAINTAINER "Andrew McLagan " <andrew@ethicaljobs.com.au>
 #--------------------------------------------------------------------------
 #
 
-ENV NGINX_VERSION 1.13.8
+ENV NGINX_VERSION 1.13.9
 
 RUN GPG_KEYS=B0F4253373F8F6F510D42178520A9993A1C052F8 \
     && CONFIG="\
@@ -72,21 +72,6 @@ RUN GPG_KEYS=B0F4253373F8F6F510D42178520A9993A1C052F8 \
         gd-dev \
         geoip-dev \
     && curl -fSL http://nginx.org/download/nginx-$NGINX_VERSION.tar.gz -o nginx.tar.gz \
-    # && curl -fSL http://nginx.org/download/nginx-$NGINX_VERSION.tar.gz.asc  -o nginx.tar.gz.asc \
-    # && export GNUPGHOME="$(mktemp -d)" \
-    # && found=''; \
-    # for server in \
-    #     ha.pool.sks-keyservers.net \
-    #     hkp://keyserver.ubuntu.com:80 \
-    #     hkp://p80.pool.sks-keyservers.net:80 \
-    #     pgp.mit.edu \
-    # ; do \
-    #     echo "Fetching GPG key $GPG_KEYS from $server"; \
-    #     gpg --keyserver "$server" --keyserver-options timeout=10 --recv-keys "$GPG_KEYS" && found=yes && break; \
-    # done; \
-    # test -z "$found" && echo >&2 "error: failed to fetch GPG key $GPG_KEYS" && exit 1; \
-    # gpg --batch --verify nginx.tar.gz.asc nginx.tar.gz \
-    # && rm -r "$GNUPGHOME" nginx.tar.gz.asc \
     && mkdir -p /usr/src \
     && tar -zxC /usr/src -f nginx.tar.gz \
     && rm nginx.tar.gz \
@@ -130,7 +115,7 @@ RUN GPG_KEYS=B0F4253373F8F6F510D42178520A9993A1C052F8 \
             | awk 'system("[ -e /usr/local/lib/" $1 " ]") == 0 { next } { print "so:" $1 }' \
     )" \
     && apk add --no-cache --virtual .nginx-rundeps $runDeps \
-    && apk del .build-deps \
+    # && apk del .build-deps \
     && apk del .gettext \
     && mv /tmp/envsubst /usr/local/bin/ \
     \
@@ -150,27 +135,60 @@ RUN GPG_KEYS=B0F4253373F8F6F510D42178520A9993A1C052F8 \
 
 RUN apk --no-cache add \
         freetype libpng libjpeg-turbo freetype-dev libpng-dev libjpeg-turbo-dev \
+        libmcrypt-dev libmemcached-dev \
+        libxml2-dev \
+        zlib-dev \
+        autoconf \
         wget \
         git \
         supervisor \
         bash \
+        icu-dev \
     && docker-php-ext-install \
         mysqli \
-        pdo_mysql \
         opcache \
+        mbstring \
+        pdo \
+        pdo_mysql \
+        tokenizer \
+        xml \
     && docker-php-ext-configure gd \
         --with-gd \
         --with-freetype-dir=/usr/include/ \
         --with-png-dir=/usr/include/ \
         --with-jpeg-dir=/usr/include/ \
     && NPROC=$(grep -c ^processor /proc/cpuinfo 2>/dev/null || 1) \
-    && docker-php-ext-install -j${NPROC} gd \
+    && docker-php-ext-install -j${NPROC} gd iconv \
     && curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/bin --filename=composer \
     && composer global require "hirak/prestissimo"
+
+# install memcached & mcrypt
+RUN pecl channel-update pecl.php.net \
+    &&  pecl install mcrypt-1.0.1 \
+    &&  docker-php-ext-enable mcrypt
+
+# install redis extention
+RUN pecl install -o -f redis \
+    &&  rm -rf /tmp/pear \
+    &&  docker-php-ext-enable redis
+
+# install mongodb ext
+RUN pecl install mongodb \
+    && docker-php-ext-enable mongodb
+
+# Install intl and requirements
+RUN docker-php-ext-configure intl \
+    && docker-php-ext-install \
+        intl \
+    && docker-php-ext-enable intl
 
 RUN mkdir -p /var/log/cron \
     && touch /var/log/cron/cron.log \
     && mkdir -m 0644 -p /etc/cron.d
+
+# bit of clean up - we remove this here (as opposed to in the main build block) 
+# because the GCC compiler is needed above in some of the PECL installs
+RUN apk del .build-deps
 
 #
 #--------------------------------------------------------------------------
@@ -179,10 +197,14 @@ RUN mkdir -p /var/log/cron \
 #
 
 ADD ./config/supervisord/* /etc/supervisord/
+ADD ./config/nginx/* /etc/nginx/
 
-ENV TZ='Australia/Melbourne'
+ENV TZ='Australia/Brisbane'
 
 ENV PATH="$PATH:/var/www/vendor/bin"
+
+
+# RUN usermod -u 1000 www-data
 
 RUN mkdir -p /var/www
 
